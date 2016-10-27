@@ -19,7 +19,10 @@ module.exports = {
     "PUT /smgs": "SMG#updateBatch",
     "DELETE /smg/:id": "SMG#removeSingle",
     "DELETE /smgs": "SMG#removeBatch",
-
+    "POST /exportSMGs": "SMG#export",
+    "POST /importSMGs": "SMG#import",
+    "GET /exportDB": "SMG#exportDB",
+    "POST /importDB": "SMG#importDB",
     //Helper topic
     "GET /helpTopic": "HelpTopic#index",
     "GET /helpTopic/:id": "HelpTopic#show",
@@ -49,6 +52,9 @@ module.exports = {
     "PUT /characteristics": "Characteristic#updateBatch",
     "DELETE /characteristic/:id": "Characteristic#removeSingle",
     "DELETE /characteristics": "Characteristic#removeBatch",
+    "PUT /characteristic/:id/check": "Characteristic#checkWillAffectSMG",
+    "POST /characteristic/:id/moveUp": "Characteristic#moveUp",
+    "POST /characteristic/:id/moveDown": "Characteristic#moveDown",
 
     //SearchForm
     "GET /searchForms": "SearchForm#index",
@@ -66,5 +72,10 @@ module.exports = {
 
     //Dashboard
     "GET /dashboard": "Dashboard#getDashboard",
-    "POST /dashboard": "Dashboard#update"
+    "POST /dashboard": "Dashboard#update",
+
+    //ExampleType
+    "GET /exampleTypes": "ExampleType#index",
+    "POST /exampleType": "ExampleType#createSingle",
+    "PUT /exampleType": "ExampleType#updateBatch"
 };

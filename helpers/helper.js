@@ -375,18 +375,11 @@ helper.checkCanUpdateCharacteristic = function (db, id, values, callback) {
  * @param {Function<err>} callback the callback function
  */
 helper.checkCanDeleteCharacteristic = function (db, entity, callback) {
-    db.models.smgCharacteristic.exists({characteristic_id: entity.id }, function (err, exists) {
-        if (err) {
-            callback(err);
-            return;
-        }
-        if (exists) {
-            callback(new BadRequestError("Can't delete Characteristic with id=" + entity.id +
-                ". Characteristic is already associated with SMGCharacteristic."));
-        } else {
-            callback();
-        }
-    });
+    if (entity.blockDelete) {
+        callback(new BadRequestError("Characteristic with id=" + entity.id + " cannot be deleted."));
+        return;
+    }
+    callback();
 };
 
 /**

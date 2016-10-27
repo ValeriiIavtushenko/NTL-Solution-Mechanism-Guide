@@ -23,7 +23,6 @@ ko.bindingHandlers.errorTooltip = {
             $("body").append(tmp.join(""));
         }
         $(element).on("mouseover", function () {
-            console.log($(element).data('error'));
             $("#error-popup").show();
             var pos = $(this).offset();
             $("#error-popup .msg").html("<p>" + $(element).data('error') + "</p>");
@@ -220,17 +219,23 @@ ko.bindingHandlers.ckEditor = {
         $(element).html(value);
         $(element).ckeditor(allBindingsAccessor().ckEditorOptions || {});
         var editor = $(element).ckeditorGet();
-        editor.on('key', function (e) {
+        var update = function (e) {
             setTimeout(function () {
                 valueAccessor()($(e.listenerData).val());
-            }, 0);
-        }, this, element);
+            }, 100);
+        };
+        editor.on('key', update, this, element);
+        editor.on('change', update, this, element);
     },
     update: function (element, valueAccessor) {
         var value = ko.utils.unwrapObservable(valueAccessor());
         var editor = $(element).ckeditorGet();
         if (editor.getData() != value) {
+            //double setData because there is a weird bug in edit smg
             editor.setData(value);
+            setTimeout(function () {
+                editor.setData(value);
+            }, 100);
         }
     }
 };
@@ -249,6 +254,13 @@ ko.bindingHandlers.jqSelect = {
                 $(element).parent().css('zIndex', i);
             });
         }
+
+        var index = $(element).prop("selectedIndex");
+        if (index == 0 && allBindings().optionsCaption) {
+            $(element).closest('.jqTransformSelectWrapper').find('span').addClass('jqTransformPlaceholder');
+        } else {
+            $(element).closest('.jqTransformSelectWrapper').find('span').addClass('jqTransformPlaceholder');
+        }
     },
     update: function(element, valueAccessor, allBindings) {
         var value = allBindings().value();
@@ -259,6 +271,21 @@ ko.bindingHandlers.jqSelect = {
             }
             var ele = $(element).closest('.jqTransformSelectWrapper').find('li > a').eq(index);
             ele.click();
+            if (index == 0 && allBindings().optionsCaption) {
+                $(element).closest('.jqTransformSelectWrapper').find('span').addClass('jqTransformPlaceholder');
+            } else {
+                $(element).closest('.jqTransformSelectWrapper').find('span').removeClass('jqTransformPlaceholder');
+            }
+            
+            $(element).closest('.jqTransformSelectWrapper').find('.jqTransformSelectOpen').bind('click', function(e){
+               if ($(e.target).closest('.jqTransformSelectWrapper').length) {
+                  $('.jqTransformSelectWrapper').css('zIndex', 99);
+                  $(e.target).closest('.jqTransformSelectWrapper').css('zIndex', 100);
+                  return;
+               }
+               $('.jqTransformSelectWrapper ul').hide();
+            });
+            
         }, 50);
     }
 };
@@ -267,21 +294,21 @@ ko.bindingHandlers.jqSelect = {
 
 //ajax loader animation
 ko.bindingHandlers.loader = {
-    init: function(element, valueAccessor) {
+    init: function(element, valueAccessor, allBindings) {
         var value = ko.unwrap(valueAccessor());
         if (value) {
             var $ele = $(element);
             $ele.show();
-            animateObject($ele, 36);
+            animateObject($ele, allBindings().loaderHeight || 36);
         }
 
     },
-    update: function(element, valueAccessor) {
+    update: function(element, valueAccessor, allBindings) {
         var value = ko.unwrap(valueAccessor());
         var $ele = $(element);
         if (value) {
             $ele.show();
-            animateObject($ele, 36);
+            animateObject($ele, allBindings().loaderHeight || 36);
         } else {
             $ele.hide();
             var timer = $ele.data('timer');
@@ -290,5 +317,192 @@ ko.bindingHandlers.loader = {
                 $ele.data('timer', null);
             }
         }
+    }
+};
+
+
+//copy to clipboard plugin
+ko.bindingHandlers.zclip = {
+    init: function(element, valueAccessor, allBindings) {
+        $(element).zclip({
+            path: '/js/libs/zclip/ZeroClipboard.swf',
+            copy: function() {
+                var val = ko.unwrap(valueAccessor());
+                if (!val) {
+                    return "";
+                }
+                return getPictureUrl(val);
+            }
+        });
+    }
+};
+
+//file upload
+ko.bindingHandlers.fileUpload = {
+    init: function(element, valueAccessor, allBindings) {
+        var $root = $(allBindings().fileUploadRoot);
+        var multiple = allBindings().fileUploadMultiple;
+        var fileModel;
+        var uploads;
+        if (multiple) {
+            uploads = valueAccessor();
+        } else {
+            fileModel = ko.unwrap(valueAccessor());
+        }
+        //browse file
+        $root.on("click", ".js-action-browse", function(){
+            $root.find(":file").trigger("click");
+        });
+
+        //get browse file name
+        $root.find(":file").change(function() {
+            var that = $(this);
+           // var _this = this;
+            var value = that.val();
+            if (!value) {
+                return;
+            }
+            var fileName = getFileName(value);
+            if (allBindings().fileName) {
+                $(allBindings().fileName).val(fileName);
+            }
+            if (multiple) {
+                fileModel = {
+                    filename: ko.observable(""),
+                    fileId: ko.observable(""),
+                    uploading: ko.observable(false),
+                    progress: ko.observable(0),
+                    uploaded: ko.observable(true),
+                    remove: function () {
+                        uploads.remove(fileModel);
+                    }
+                };
+                fileModel.fileUrl = ko.computed(function () {
+                    if (!fileModel.fileId()) {
+                        return null;
+                    }
+                    return getPictureUrl(fileModel.fileId());
+                });
+                uploads.push(fileModel);
+            }
+
+            fileModel.uploading(true);
+            $root.find('form').ajaxSubmit({
+                dataType: 'json',
+                success: function (ret) {
+                    if (ret.mime.indexOf("image") == -1) {
+                        showAlert("Invalid image");
+                        fileModel.uploading(false);
+                        if (multiple) {
+                            uploads.remove(fileModel);
+                        }
+                        return;
+                    }
+                    fileModel.filename(ret.filename);
+                    fileModel.fileId(ret.id);
+                    fileModel.uploading(false);
+                    fileModel.uploaded(true);
+                },
+                uploadProgress: function (event, position, total, percent) {
+                    fileModel.progress(Math.floor(percent));
+                },
+                error: function (response) {
+                    if (multiple) {
+                        uploads.remove(fileModel);
+                    }
+                    fileModel.uploading(false);
+                    handleError(response);
+                }
+            });
+
+        });
+
+    },
+    update: function(element, valueAccessor) {
+    }
+};
+
+
+//align box height in smg listing
+ko.bindingHandlers.alignBox = {
+    init: function (element, valueAccessor, allBindingsAccessor) {
+        var ele = $(element);
+        if (ele.hasClass("left")) {
+            return;
+        }
+        setTimeout(function () {
+            var left = ele.prev();
+            var height = Math.max(left.find('.title').height(), ele.find('.title').height());
+            left.find('.title').height(height)
+            ele.find('.title').height(height)
+        });
+    }
+};
+
+
+ko.bindingHandlers.dollarSign = {
+    init: function (element, valueAccessor) {
+    },
+    update: function(element, valueAccessor) {
+        var smg = valueAccessor();
+        var values = _.where(smg.smgCharacteristics, {characteristic_id: 6});
+        var mapping = window.dashboard.dollarMapping || {};
+        $(element).removeClass("dollar1 dollar2 dollar3");
+        var max = 1;
+        var title = "";
+        _.each(values, function (value) {
+            var sign = mapping[value.valueType.id];
+            if (sign) {
+                var dollarValue = sign.length;
+                if (dollarValue >= max) {
+                    max = dollarValue;
+                    title = value.valueType.name;
+                }
+            }
+        });
+        $(element).addClass("dollar" + max);
+        $(element).attr('title', title);
+    }
+};
+
+
+ko.bindingHandlers.clockText = {
+    update: function (element, valueAccessor) {
+        var smg = valueAccessor();
+        var values = _.where(smg.smgCharacteristics, {characteristic_id: 5});
+        var text = "Low";
+        var max = 1;
+        var title = "";
+        var mapping = window.dashboard.timeMapping || {};
+        _.each(values, function (value) {
+            var time = mapping[value.valueType.id];
+            if (time) {
+                var timeValue = 1;
+                if (time === "Med") {
+                    timeValue = 2;
+                }
+                if (time === "High") {
+                    timeValue = 3;
+                }
+                if (timeValue >= max) {
+                    text = time;
+                    max = timeValue;
+                    title = value.valueType.name;
+                }
+            }
+        });
+        $(element).attr('title', title);
+        $(element).next().text(text);
+    }
+};
+
+
+ko.bindingHandlers.radial = {
+    update: function (element, valueAccessor) {
+        var smg = valueAccessor();
+
+        $(element).removeClass("gray-radial brown-radial yellow-radial blue-radial green-radial");
+        $(element).attr('title', smg.radialTitle);
+        $(element).addClass(smg.radialClass);
     }
 };

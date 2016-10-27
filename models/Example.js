@@ -14,8 +14,10 @@ var types = require("../helpers/dbTypes");
 module.exports = {
     init : function (db, callback) {
         var Example = db.define('example', {
-            name: types.optional_string,
-            description: types.string
+            name: types.string,
+            type: types.string,
+            description: types.string,
+            imageId: {type: "number", required: false,  rational: false}
         });
         Example.hasOne('smg', db.models.smg, {reverse: 'examples', required: true});
         Example.collectionName = "Example";

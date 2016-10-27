@@ -4,10 +4,18 @@
  * @author TCSASSEMBLER
  */
 
+CKEDITOR.config.allowedContent = true; 
+CKEDITOR.config.protectedSource.push(/<[^>]*><\/[^>]*>/g);
+ 
 /**
  * Base API URL
  */
 var API_URL = "/api";
+
+/**
+ * Template Zip file URL
+ */
+var TEMPLATE_URL="/sample.zip";
 
 /**
  * Characteristic types, number represent ID
@@ -18,8 +26,10 @@ var chTypes = {
     picklist: 3,
     radio: 4,
     text: 5,
-    textarea: 6
+    textarea: 6,
+    image: 7
 };
+
 
 /**
  * Allowed tabs for characteristics
@@ -33,7 +43,7 @@ var chIds = {
     name: 1,
     desc: 2,
     aka: 3,
-    type: 4,
+    image: 4,
     duration: 5,
     cost: 6
 };
@@ -44,8 +54,7 @@ if(typeof String.prototype.trim !== 'function') {
     }
 }
 
-if (!Array.prototype.indexOf)
-{
+if (!Array.prototype.indexOf) {
     Array.prototype.indexOf = function(elt /*, from*/)
     {
         var len = this.length >>> 0;
@@ -85,6 +94,14 @@ function handleError(response) {
     alert("ERROR OCCURRED: \n" + response.responseJSON ? response.responseJSON.details : response.responseText);
 }
 
+/**
+ * Get picture url for smg
+ * @param {String} fileId the file upload id
+ * @returns {string} the url
+ */
+function getPictureUrl(fileId) {
+    return API_URL + "/helpTopic/" + fileId + "/download";
+}
 
 /**
  * Get JSON response from API. Random parameter is added to query string to prevent caching
@@ -108,9 +125,13 @@ function getJSON(url, callback, errorCallback) {
  * @param {String} text the text to show
  * @param {Function} onClose the callback when popup is closed
  */
-function showAlert(text, onClose) {
+function showAlert(text, onClose, isHtml) {
     var $popup = $('#alert-popup').clone();
-    $popup.find('.popup-form span').text(text);
+    if (isHtml) {
+        $popup.find('.popup-form span').html(text);
+    } else {
+        $popup.find('.popup-form span').text(text);
+    }
     $popup.find('.ok, .tooltip-close').click(function () {
         $popup.remove();
         $("#modal-window-bg").hide();
@@ -196,7 +217,7 @@ var animateObject = function (obj, height) {
     var counter = 0;
     preloaderTimer = setInterval(function(){
         if(counter >= fps) counter = 0;
-        obj.css({backgroundPositionY: eval(-counter*height)+"px"});
+        obj.css({'background-position': "0 " + eval(-counter*height)+"px"});
         counter++;
     }, fpsTimer);
     obj.data('timer', preloaderTimer);
@@ -289,31 +310,93 @@ ko.validation.registerExtenders();
  */
 function ManageCharacteristicsViewModel() {
     var self = this;
+    self.tab = ko.observable("Information");
     //true if loading data
     self.loading = ko.observable(true);
     //list of all characteristc items
     self.allItems = ko.observableArray([]);
     //used in paginator
     self.items = ko.computed(function () {
-        var ret = self.allItems();
+        var ret = [];
+        console.log(self.tab());
+        self.allItems().forEach(function (ele) {
+            console.log(ele.tab);
+            if (ele.tab == self.tab()) {
+                ret.push(ele);
+            }
+        });
         ret.sort(function (a, b) {
-            return a.id - b.id;
+            return a.sort() - b.sort();
         });
         return ret;
     });
     //allowed characteristic types
     self.types = ko.observableArray([]);
     initPagination(self);
+    var fixSorting = function (item) {
+        item.sort = ko.observable(item.sort);
+        item.moveUp = function () {
+            if (!item.canMoveUp()) {
+                return;
+            }
+            blockUI();
+            fakeTimeout(function () {
+                $.ajax({
+                    type: "post",
+                    url: API_URL + "/characteristic/" + item.id + "/moveUp",
+                    success: function () {
+                        var index = self.items().indexOf(item);
+                        var swap = self.items()[index - 1];
+                        var tmp = swap.sort();
+                        swap.sort(item.sort());
+                        item.sort(tmp);
+                        unBlockUI();
+                    },
+                    error: handleError,
+                    dataType: "json"
+                });
+            });
+        };
+        item.moveDown = function () {
+            if (!item.canMoveDown()) {
+                return;
+            }
+            blockUI();
+            fakeTimeout(function () {
+                $.ajax({
+                    type: "post",
+                    url: API_URL + "/characteristic/" + item.id + "/moveDown",
+                    success: function () {
+                        var index = self.items().indexOf(item);
+                        var swap = self.items()[index + 1];
+                        var tmp = swap.sort();
+                        swap.sort(item.sort());
+                        item.sort(tmp);
+                        unBlockUI();
+                    },
+                    error: handleError,
+                    dataType: "json"
+                });
+            });
+        };
+        item.canMoveUp = function () {
+            return self.items().indexOf(item) != 0;
+        };
+        item.canMoveDown = function () {
+            return self.items().length > 1 && self.items().indexOf(item) + 1 != self.items().length;
+        }
+    };
     fakeTimeout(function () {
         async.parallel([
             function (cb) {
                 getJSON(API_URL + "/characteristics", function (ret) {
+                    _.each(ret, fixSorting);
                     self.allItems(ret);
                     cb();
                 });
             }, function (cb) {
                 getJSON(API_URL + "/characteristicTypes", function (ret) {
-                    self.types(ret);
+                    self.types(_.filter(ret, function (type) { return type.id !== chTypes.image}));
                     cb();
                 });
             }
@@ -333,6 +416,8 @@ function ManageCharacteristicsViewModel() {
             tab: ko.observable().extend({required: true}),
             description: ko.observable().extend({required: true}),
             type: ko.observable().extend({required: true}),
+            blockDelete: ko.observable(false),
+            typeName: ko.observable(""),
             values: ko.observableArray([{val: ""}, {val: ""}, {val: ""}])
         });
         self.newCharacteristic().addValue = function () {
@@ -362,11 +447,13 @@ function ManageCharacteristicsViewModel() {
         initCharToCreateOrEdit();
         self.editingItem(item);
         self.newCharacteristic().name(item.name);
+        self.newCharacteristic().blockDelete(item.blockDelete || false);
         self.newCharacteristic().tab(item.tab);
         self.newCharacteristic().description(item.description);
         self.newCharacteristic().type(item.type_id);
+        self.newCharacteristic().typeName(item.type.name);
         self.newCharacteristic().values(_.map(item.values, function (ele) {
-            return { val: ele.name};
+            return { val: ele.name, id: ele.id};
         }));
         for (var i = self.newCharacteristic().values().length; i < 3; i += 1) {
             self.newCharacteristic().values.push({val: ""});
@@ -382,12 +469,11 @@ function ManageCharacteristicsViewModel() {
             return;
         }
         var values = _.chain(newChar.values())
-            .pluck('val')
             .filter(function (ele) {
-                return ele.trim().length;
+                return ele.val.trim().length;
             })
             .value();
-        if ([chTypes.picklist, chTypes.radio].indexOf(newChar.type()) !== -1) {
+        if ([chTypes.picklist, chTypes.radio, chTypes.checkbox].indexOf(newChar.type()) !== -1) {
             if (!values.length) {
                 alert('At least one non-empty value is required.');
                 return;
@@ -399,7 +485,9 @@ function ManageCharacteristicsViewModel() {
             .filter(function (ele) {
                 return ele.tab === newChar.tab()
             })
-            .pluck("sort")
+            .map(function (ele) {
+                return ele.sort();
+            })
             .max(function (ele) {
                 return ele;
             })
@@ -410,7 +498,7 @@ function ManageCharacteristicsViewModel() {
         if (self.editingItem()) {
             //change sort only if tab was changed
             if (newChar.tab() === self.editingItem().tab) {
-                nextSort = self.editingItem().sort;
+                nextSort = self.editingItem().sort();
             }
         }
         if (self.submitting()) {
@@ -423,7 +511,7 @@ function ManageCharacteristicsViewModel() {
             description: newChar.description(),
             type_id: newChar.type(),
             values: values.length ? _.map(values, function (ele) {
-                return {name: ele}
+                return {name: ele.val, id: ele.id}
             }) : undefined,
             tab: newChar.tab(),
             sort: nextSort
@@ -436,20 +524,54 @@ function ManageCharacteristicsViewModel() {
             if (self.editingItem()) {
                 self.isEditing(true);
                 var item = self.editingItem();
-                $.ajax({
-                    type: "put",
-                    url: API_URL + "/characteristic/" + item.id,
-                    contentType: 'application/json',
-                    data: data,
-                    success: function (ret) {
+                async.waterfall([
+                    function (cb) {
+                        $.ajax({
+                            type: "put",
+                            url: API_URL + "/characteristic/" + item.id + "/check",
+                            contentType: 'application/json',
+                            data: data,
+                            success: function (ret) { cb(null, ret); },
+                            error: onError,
+                            dataType: "json"
+                        });
+                    }, function (ret, cb) {
+                        if (!ret.affect) {
+                            cb();
+                            return;
+                        }
+                        $('#add-popup').hide();
+                        showConfirm("Value(s): " + ret.values.join(', ') +  " are currently being used by some SMGs," +
+                            " removing these value will set the SMG association to the first lookup item." +
+                            " Are you sure you want to proceed?",
+                            cb,
+                            function () {
+                                self.submitting(false);
+                                clearAnimation($('#add-popup .js-add-loader'));
+                                showModal($('#add-popup'));
+                            });
+                    }, function (cb) {
+                        $('#add-popup').show();
+                        $("#modal-window-bg").show();
+                        fakeTimeout(function () {
+                            $.ajax({
+                                type: "put",
+                                url: API_URL + "/characteristic/" + item.id,
+                                contentType: 'application/json',
+                                data: data,
+                                success: function (ret) { cb(null, ret); },
+                                error: onError,
+                                dataType: "json"
+                            });
+                        });
+                    }, function (ret) {
                         self.allItems.remove(item);
+                        fixSorting(ret);
                         self.allItems.push(ret);
                         self.closeAddPopup();
                         showAlert('Characteristic Has Been Saved');
-                    },
-                    error: onError,
-                    dataType: "json"
-                });
+                    }
+                ]);
             } else {
                 self.isEditing(false);
                 $.ajax({
@@ -458,6 +580,7 @@ function ManageCharacteristicsViewModel() {
                     contentType: 'application/json',
                     data: data,
                     success: function (ret) {
+                        fixSorting(ret);
                         self.allItems.push(ret);
                         self.closeAddPopup();
                         showAlert('Characteristic Has Been Added');
@@ -469,8 +592,7 @@ function ManageCharacteristicsViewModel() {
         });
     };
     self.remove = function (item) {
-        if (_.values(chIds).indexOf(item.id) != -1) {
-            showAlert("This characteristic cannot be deleted.");
+        if (item.blockDelete) {
             return;
         }
         showConfirm("Are you sure you want to delete this item?", function () {
@@ -503,25 +625,27 @@ function AddEditSMGViewModel() {
     self.loading = ko.observable(true);
     self.characteristics = ko.observableArray([]);
     self.step = ko.observable(1);
-    self.examples = ko.observableArray([{value: ko.observable("")}]);
-    //non empty examples
-    self.exampleValues = ko.computed(function () {
-        var values = _.map(self.examples(), function (ele) {
-            return ele.value();
-        });
-        return _.filter(values, function (v) {
-            return $('<div></div>').html(v).text().trim().length;
-        });
-    });
+    self.examples = ko.observableArray([]);
+    self.activeExample = ko.observable();
+
     self.step1Items = ko.computed(function () {
         return _.filter(self.characteristics(), function (item) {
-            return item.tab === chTabs[0]
+            return item.tab === chTabs[0];
         })
     });
     self.step3Items = ko.computed(function () {
         return _.filter(self.characteristics(), function (item) {
-            return item.tab === chTabs[1]
+            return item.tab === chTabs[1];
         })
+    });
+    self.picture = ko.computed(function () {
+        var item = _.filter(self.characteristics(), function (item) {
+            return item.id == chIds.image;
+        })[0];
+        if (item) {
+            return getPictureUrl(item.file.fileId());
+        }
+        return null;
     });
     blockUI();
     self.loaded = ko.observable(false);
@@ -530,7 +654,15 @@ function AddEditSMGViewModel() {
     fakeTimeout(function () {
         async.series([
             function (cb) {
+                getJSON(API_URL + "/exampleTypes", function (ret) {
+                    self.exampleTypes(_.pluck(ret, "name"));
+                    cb();
+                });
+            }, function (cb) {
                 getJSON(API_URL + "/characteristics", function (ret) {
+                    ret.sort(function (a, b) {
+                        return a.sort - b.sort;
+                    });
                     var items = _.map(ret, function (item) {
                         var extend = {
                             required: {
@@ -543,14 +675,49 @@ function AddEditSMGViewModel() {
                         if (item.type_id == chTypes.number) {
                             extend.number = true;
                         }
-                        item.value = ko.observable().extend(extend);
+
+                        if (item.type_id == chTypes.checkbox) {
+                            item.multipleValue = ko.observableArray([]).extend(extend);
+                        } else {
+                            item.value = ko.observable().extend(extend);
+                        }
                         item.displayValue = ko.computed(function () {
+                            if (item.multipleValue) {
+                                var values = _.pluck(item.multipleValue(), "name");
+                                values.sort();
+                                return values.join(", ");
+                            }
                             var val = item.value();
                             if (val && val.name) {
                                 return val.name
                             }
                             return val;
                         });
+                        if (item.type_id == chTypes.image) {
+                            item.file = {
+                                progress: ko.observable(0),
+                                filename: ko.observable("").extend(extend),
+                                fileId: ko.observable(""),
+                                uploading: ko.observable(false),
+                                uploaded: ko.observable(false)
+                            };
+                            item.file.fileUrl = ko.computed(function () {
+                                if (!item.file.fileId()) {
+                                    return "";
+                                }
+                                return getPictureUrl(item.file.fileId());
+                            });
+                            item.file.fileId.subscribe(function (val) {
+                                item.value(String(val));
+                            });
+                            item.file.remove = function () {
+                                item.file.progress(0);
+                                item.file.filename("");
+                                item.file.fileId("");
+                                item.file.uploading(false);
+                                item.file.uploaded(false);
+                            }
+                        }
                         return item;
                     });
                     self.characteristics(items);
@@ -573,20 +740,33 @@ function AddEditSMGViewModel() {
                                 return;
                             }
                             var val;
-                            if (ch.type_id == chTypes.picklist || ch.type_id == chTypes.radio) {
+                            if (ch.type_id == chTypes.picklist || ch.type_id == chTypes.radio || ch.type_id == chTypes.checkbox) {
                                 val = _.filter(ch.values, function (v) {
                                     return v.id == currentCh.valuetype_id
                                 })[0];
                             } else {
                                 val = currentCh.value;
                             }
-                            ch.value(val);
+                            if (ch.type_id == chTypes.checkbox) {
+                                ch.multipleValue.push(val);
+                            } else {
+                                ch.value(val);
+                            }
+                            if (ch.type_id == chTypes.image) {
+                                ch.file.progress(100);
+                                ch.file.filename(getPictureUrl(val));
+                                ch.file.fileId(val);
+                                ch.file.uploaded(true);
+                            }
                         });
                     });
                     self.examples(_.map(ret.examples, function (item) {
-                        return {
-                            value: ko.observable(item.description)
-                        };
+                        return createExample({
+                            description: ko.observable(item.description).extend({required: true}),
+                            type: ko.observable(item.type).extend({required: true}),
+                            imageId: ko.observable(item.imageId).extend({required: true}),
+                            name: ko.observable(item.name).extend({required: true})
+                        });
                     }));
                     cb();
                 });
@@ -600,10 +780,19 @@ function AddEditSMGViewModel() {
     self.nextStep = function () {
         var step = self.step();
         if (step == 1) {
+            window.errors = self.errorsTab1();
             self.errorsTab1.showAllMessages();
             if (self.errorsTab1().length) {
                 return;
             }
+        }
+        if (step == 2) {
+            self.errorsExamples = ko.validation.group({examples: self.examples}, { deep: true });
+            self.errorsExamples.showAllMessages();
+            if (self.errorsExamples().length) {
+                return;
+            }
+            self.activeExample(self.examples()[0]);
         }
         if (step == 3) {
             self.errorsTab3.showAllMessages();
@@ -611,26 +800,51 @@ function AddEditSMGViewModel() {
                 return;
             }
         }
-
-        if (step === 2) {
-            var values = self.exampleValues();
-            if (!values.length) {
-                alert('At least one example is required (non-empty value)');
-                return;
-            }
-            self.step(self.step() + 1);
-            return;
-        }
         self.step(self.step() + 1);
     };
     self.prevStep = function () {
         self.step(self.step() - 1);
     };
 
-    self.addExample = function () {
-        self.examples.push({value: ko.observable("")});
+    var createExample = function (item) {
+        item.file = {
+            progress: ko.observable(item.imageId() ? 100 : 0),
+            filename: ko.observable(item.imageId() ? getPictureUrl(item.imageId()) : "").extend({required: true}),
+            fileId: ko.observable(item.imageId() || ""),
+            uploading: ko.observable(false),
+            uploaded: ko.observable(!!item.imageId()),
+            randomId: "file-" + Math.floor(Math.random() * 100000)
+        };
+        item.file.fileUrl = ko.computed(function () {
+            if (!item.file.fileId()) {
+                return "";
+            }
+            return getPictureUrl(item.file.fileId());
+        });
+        item.file.fileId.subscribe(function (val) {
+            item.imageId(val);
+        });
+        item.file.remove = function () {
+            item.file.progress(0);
+            item.file.filename("");
+            item.file.fileId("");
+            item.file.uploading(false);
+            item.file.uploaded(false);
+        }
+        return item;
     };
 
+    self.addExample = function () {
+        var item = {
+            description: ko.observable().extend({required: true}),
+            name: ko.observable().extend({required: true}),
+            type: ko.observable().extend({required: true}),
+            imageId: ko.observable().extend({required: true})
+        };
+        createExample(item);
+        self.examples.push(item);
+    };
+    self.addExample();
     self.goToStep = function (step) {
         if (step < self.step()) {
             self.step(step);
@@ -644,6 +858,12 @@ function AddEditSMGViewModel() {
     self.finish = function () {
         var data = {
             characteristics: _.map(self.characteristics(), function (item) {
+                if (item.type_id == chTypes.checkbox) {
+                    return {
+                        characteristic: item.id,
+                        value: _.pluck(item.multipleValue(), "id")
+                    };
+                }
                 var val = item.value();
                 if (item.type_id == chTypes.picklist || item.type_id == chTypes.radio) {
                     val = [val.id];
@@ -653,10 +873,9 @@ function AddEditSMGViewModel() {
                     value: val
                 };
             }),
-            examples: _.map(self.exampleValues(), function (item) {
-                return {
-                    description: item
-                }
+            examples: _.map(ko.toJS(self.examples()), function (item) {
+                delete item.file;
+                return item;
             })
         };
         blockUI();
@@ -694,6 +913,42 @@ function AddEditSMGViewModel() {
             }
         });
     };
+
+    self.exampleTypes = ko.observableArray([]);
+    self.newExampleType = ko.observable("").extend({required: true});
+    var newExampleTypeErrors = ko.validation.group({name: self.newExampleType}, true);
+    self.hideAddExampleTypePopup = function () {
+        hideModal($('#add-type-popup'));
+    };
+    self.showAddExampleTypePopup = function () {
+        self.newExampleType("");
+        newExampleTypeErrors.showAllMessages(false);
+        showModal($('#add-type-popup'));
+    };
+    self.addExampleType = function () {
+        newExampleTypeErrors.showAllMessages();
+        if (newExampleTypeErrors.length) {
+            return;
+        }
+        self.addExampleTypeLoading(true);
+        fakeTimeout(function () {
+            $.ajax({
+                type: "post",
+                url: API_URL + "/exampleType",
+                contentType: 'application/json',
+                data: JSON.stringify({name: self.newExampleType()}),
+                success: function () {
+                    self.addExampleTypeLoading(false);
+                    self.exampleTypes.push(self.newExampleType());
+                    self.hideAddExampleTypePopup();
+                    showAlert('Type Has Been Added!');
+                },
+                error: handleError,
+                dataType: "json"
+            });
+        })
+    };
+    self.addExampleTypeLoading = ko.observable(false);
 }
 
 /**
@@ -752,7 +1007,8 @@ function AdminSMGViewModel() {
                             id: item.id,
                             name: getChar(chIds.name),
                             desc: getChar(chIds.desc),
-                            aka: getChar(chIds.aka)
+                            aka: getChar(chIds.aka),
+                            picture: getPictureUrl(getChar(chIds.image))
                         }
                     });
                     self.allItems(items);
@@ -818,7 +1074,7 @@ function FormFilterViewModel() {
             async.series([
                 function (cb) {
                     getJSON(API_URL + "/characteristics", function (ret) {
-                        self.characteristics(ret);
+                        self.characteristics(_.filter(ret, function (item) { return item.type_id != chTypes.image; }));
                         cb();
                     });
                 }, function (cb) {
@@ -930,7 +1186,7 @@ function FormFilterViewModel() {
             }
             field.sort(nextSort);
         }
-        if ([chTypes.radio, chTypes.picklist].indexOf(self.newField.characteristic().type_id) != -1) {
+        if ([chTypes.radio, chTypes.picklist, chTypes.checkbox].indexOf(self.newField.characteristic().type_id) != -1) {
             if (!self.newField.values().length) {
                 alert('Please select at least one value');
                 return
@@ -1079,7 +1335,14 @@ function SMGListingViewModel() {
                         alert('Active search form not found');
                         return;
                     }
+                    var values = window.location.hash.substr(1).split("$");
                     var fields = _.map(form.fields, function (field) {
+                        var value = values.shift();
+                        var selectedValues;
+
+                        if (field.characteristic.type_id == chTypes.picklist) {
+                            value = Number(value) || undefined;
+                        }
                         var ret = {
                             name: field.characteristic.name,
                             type_id: field.characteristic.type_id,
@@ -1097,14 +1360,33 @@ function SMGListingViewModel() {
                                 })
                                 .compact()
                                 .value(),
-                            value: ko.observable(""),
-                            selectedValue: ko.observable()
+                            value: ko.observable(value),
+                            selectedValue: ko.observable(),
+                            revert: function () {
+                                ret.value(value);
+                                if (ret.selectedValues) {
+                                    selectedValues = _.chain(value.split(';')).compact().map(function (v) {
+                                        return Number(v);
+                                    }).value();
+                                    ret.selectedValues(selectedValues);
+                                }
+                            }
                         };
                         if ([chTypes.number, chTypes.text, chTypes.textarea].indexOf(ret.type_id) != -1) {
                             ret.value.extend({required: false})
                         }
                         if (ret.type_id == chTypes.number) {
                             ret.value.extend({number: false})
+                        }
+                        if (ret.type_id == chTypes.radio || ret.type_id == chTypes.checkbox) {
+                            ret.selectedValues = ko.observableArray();
+                            if (value && value.length) {
+                                selectedValues = _.map(value.split(';'), function (v) {
+                                    return Number(v);
+                                });
+                                ret.selectedValues(selectedValues);
+                                selectedValues = _.clone(selectedValues);
+                            }
                         }
                         return ret;
                     });
@@ -1124,8 +1406,8 @@ function SMGListingViewModel() {
     });
     self.compareUrl = ko.computed(function () {
         var items = self.selectedItems();
-        if (items.length == 2) {
-            return "/compare/" + items[0].id + "/" + items[1].id;
+        if (items.length > 1) {
+            return "/compare/" + _.pluck(items, "id").join("/");
         }
         return "javascript:;";
     });
@@ -1134,12 +1416,18 @@ function SMGListingViewModel() {
     });
     self.search = function () {
         self.loading(true);
+        var values = [];
         var criteria = _.chain(self.fields()).map(function (f) {
-            var val = f.selectedValue();
-            if (val) {
+            var val = f.value();
+            if (f.selectedValues) {
+                val = f.selectedValues();
+                values.push(val.join(";"));
+            } else if (_.isNumber(val)) {
+                values.push(val);
                 val = [val];
             } else {
-                val = f.value().trim();
+                val = (val || "").trim();
+                values.push(val);
             }
             return {
                 characteristic: f.characteristic_id,
@@ -1148,12 +1436,16 @@ function SMGListingViewModel() {
         }).filter(function (f) {
             return f.value.length;
         }).value();
+        window.location.hash = "#" + values.join("$");
         var url = API_URL + "/search2?criteria=" + encodeURIComponent(JSON.stringify(criteria));
         if (!criteria.length) {
             url = API_URL + "/smgs";
         }
         fakeTimeout(function () {
             getJSON(url, function (ret) {
+                ret.sort(function (a, b) {
+                    return b.accuracy - a.accuracy;
+                });
                 var items = _.map(ret, function (item) {
                     var getChar = function (id) {
                         var foundChar = _.filter(item.smgCharacteristics, function (ch) {
@@ -1172,16 +1464,49 @@ function SMGListingViewModel() {
                         name: getChar(chIds.name),
                         desc: getChar(chIds.desc),
                         duration: getChar(chIds.duration),
+                        picture:  getPictureUrl(getChar(chIds.image)),
                         cost: formatCost(getChar(chIds.cost)),
                         compare: ko.observable(false),
                         org: item
                     };
+
+                    // compute radial color
+                    var values = _.filter(item.smgCharacteristics, function (val) {
+                        return val.characteristic.name === "Deliverables" ||
+                            val.characteristic.name === "Deliverable Type";
+                    });
+                    var radialClass, radialTitle, value;
+                    if (values.length > 1) {
+                        radialClass = "brown-radial";
+                        radialTitle = _.map(values, function (v) {
+                            return v.valueType.name;
+                        }).join(', ');
+                    } else {
+                        value = values[0];
+                        var v = value.valueType.name;
+                        radialTitle = v;
+                        if (v === "Standards and Requirements" || v === "Standards/Requirements") {
+                            radialClass = "gray-radial";
+                        }
+                        if (v === "Countermeasures and Controls" || v === "Countermeasures/Controls") {
+                            radialClass = "green-radial";
+                        }
+                        if (v === "Technology") {
+                            radialClass = "yellow-radial";
+                        }
+                        if (v === "Knowledge") {
+                            radialClass = "blue-radial";
+                        }
+                    }
+                    model.radialClass = radialClass;
+                    model.radialTitle = radialTitle;
+
                     model.compare.subscribe(function (val) {
                         if (self.popupSmg() == model) {
                             return;
                         }
                         self.popupSmg(null);
-                        if (val && self.selectedItems().length == 2) {
+                        if (val && self.selectedItems().length == 4) {
                             showModal($("#cannot-add-compare"));
                             setTimeout(function () {
                                 model.compare(false);
@@ -1189,6 +1514,16 @@ function SMGListingViewModel() {
                         }
                     });
                     return model;
+                });
+                var radialsOrder = {
+                    "gray-radial": 0,
+                    "green-radial": 1,
+                    "yellow-radial": 2,
+                    "blue-radial": 3,
+                    "brown-radial": 4
+                };
+                items.sort(function(a, b) {
+                    return radialsOrder[a.radialClass] - radialsOrder[b.radialClass];
                 });
                 self.items(items);
                 self.loading(false);
@@ -1205,9 +1540,9 @@ function SMGListingViewModel() {
     self.comparePopup = function () {
         hideModal($("#agreement-popup"));
         if (!self.popupSmg().compare()) {
-            console.log(self.selectedItems().length);
-            if (self.selectedItems().length == 2) {
+            if (self.selectedItems().length == 4) {
                 showModal($("#cannot-add-compare"));
+                self.popupSmg(null);
             } else {
                 self.popupSmg().compare(true);
             }
@@ -1229,45 +1564,58 @@ function SMGListingViewModel() {
  */
 function SMGModel(data) {
     var self = this;
+    data = JSON.parse(JSON.stringify(data));
     self.values = {};
     self.characteristics = {};
     //without name
     self.otherValues = {};
     self.name = "";
+    self.picture = "";
     self.id = data.id;
-
-    _.each(data.smgCharacteristics, function (prop) {
-        var val = prop.value;
-        if (prop.valuetype_id != null) {
-            var selectedItem = _.filter(prop.characteristic.values, function (v) {
-                return v.id == prop.valuetype_id
-            })[0];
-            if (!selectedItem) {
-                val = "";
+    data.smgCharacteristics = _.chain(data.smgCharacteristics)
+        .groupBy(function (item) {
+            return item.characteristic.id;
+        })
+        .map(function (group) {
+            var val;
+            var prop = group[0];
+            val = _.map(group, function (item) {
+                if (item.valueType) {
+                    return item.valueType.name
+                }
+                return item.value || "";
+            }).join(", ");
+            self.values[prop.characteristic.name] = val;
+            self.characteristics[prop.characteristic.id] = val;
+            prop.displayValue = val;
+            if (prop.characteristic.id == chIds.name) {
+                self.name = val;
+            } else if (prop.characteristic.id == chIds.image) {
+                self.picture = getPictureUrl(val);
             } else {
-                val = selectedItem.name;
+                self.otherValues[prop.characteristic.name] = val;
             }
-        }
-        self.values[prop.characteristic.name] = val;
-        self.characteristics[prop.characteristic.id] = val;
-        prop.displayValue = val;
-        if (prop.characteristic.id == chIds.name) {
-            self.name = val;
-        } else {
-            self.otherValues[prop.characteristic.name] = val;
-        }
-    });
-
+            return prop;
+        })
+        .value();
     self.smgCharacteristics = ko.observableArray(data.smgCharacteristics);
     self.tab1Items = ko.computed(function () {
-        return _.filter(self.smgCharacteristics(), function (item) {
-            return item.characteristic.tab === chTabs[0]
-        })
+        var ret = _.filter(self.smgCharacteristics(), function (item) {
+            return item.characteristic.tab === chTabs[0] && item.characteristic.id != chIds.image;
+        });
+        ret.sort(function (a, b) {
+            return a.characteristic.sort - b.characteristic.sort;
+        });
+        return ret;
     });
     self.tab3Items = ko.computed(function () {
-        return _.filter(self.smgCharacteristics(), function (item) {
+        var ret =  _.filter(self.smgCharacteristics(), function (item) {
             return item.characteristic.tab === chTabs[1]
         })
+        ret.sort(function (a, b) {
+            return a.characteristic.sort - b.characteristic.sort;
+        });
+        return ret;
     });
     self.examples = _.pluck(data.examples, "description");
 }
@@ -1279,7 +1627,7 @@ function SMGModel(data) {
 function CompareViewModel() {
     var self = this;
     self.loading = ko.observable(true);
-    var ids = [urlParams.left, urlParams.right];
+    var ids = _.values(urlParams);
     self.items = ko.observableArray([]);
     fakeTimeout(function () {
         var items = [];
@@ -1305,9 +1653,13 @@ function SMGDetailsViewModel() {
     var id = urlParams.id;
     self.loading = ko.observable(true);
     self.smg = ko.observable();
+    self.activeExample = ko.observable();
+    self.examples = ko.observableArray();
     fakeTimeout(function () {
         getJSON(API_URL + "/smg/" + id, function (ret) {
             self.smg(new SMGModel(ret));
+            self.examples(ret.examples);
+            self.activeExample(ret.examples[0]);
             self.loading(false);
         })
     });
@@ -1408,7 +1760,17 @@ function HelpViewModel() {
     self.topicsLoaded = ko.observable(false);
     self.dashboardLoaded = ko.observable(false);
     self.dashboardText = ko.observable("");
-
+    self.dashboardCss = ko.observable("");
+	self.characteristics ={};
+    self.characteristicsLoaded = ko.observable(false);
+    self.preview = function () {
+        if (!$('#preview-css').length) {
+            $('head').append("<style type='text/css' id='preview-css'></style>")
+        }
+        $('#preview-css').html(self.dashboardCss());
+        $('#banner-preview').html(self.dashboardText());
+    };
+    self.images = ko.observableArray([]);
     self.showDashboard = function () {
         self.tab("dashboard");
         window.location.hash = "";
@@ -1419,6 +1781,26 @@ function HelpViewModel() {
         fakeTimeout(function () {
             getJSON(API_URL + "/dashboard", function (ret) {
                 self.dashboardText(ret.description);
+                self.dashboardCss(ret.css);
+                self.images(_.map(ret.images || [], function (id) {
+                    var fileModel = {
+                        filename: ko.observable(""),
+                        fileId: ko.observable(id),
+                        uploading: ko.observable(false),
+                        progress: ko.observable(100),
+                        uploaded: ko.observable(true),
+                        remove: function () {
+                            self.images.remove(fileModel);
+                        }
+                    };
+                    fileModel.fileUrl = ko.computed(function () {
+                        if (!fileModel.fileId()) {
+                            return null;
+                        }
+                        return getPictureUrl(fileModel.fileId());
+                    });
+                    return fileModel;
+                }));
                 self.dashboardLoaded(true);
                 unBlockUI();
             });
@@ -1430,9 +1812,14 @@ function HelpViewModel() {
     self.saveDashboard = function () {
         blockUI();
         fakeTimeout(function () {
-            var data = JSON.stringify({
-                description: self.dashboardText()
+            window.dashboard = _.extend(window.dashboard, {
+                description: self.dashboardText(),
+                css: self.dashboardCss(),
+                images: _.map(ko.toJS(self.images), function (image) {
+                    return image.fileId;
+                })
             });
+            var data = JSON.stringify(window.dashboard);
             $.ajax({
                 type: "post",
                 url: API_URL + "/dashboard",
@@ -1445,6 +1832,66 @@ function HelpViewModel() {
                 dataType: "json"
             });
         })
+    };
+    self.configurationLoaded = false;
+    self.showConfiguration = function () {
+        self.tab("configuration");
+        window.location.hash = "#configuration";
+        if (self.configurationLoaded) {
+            return;
+        }
+        self.loading(true);
+        blockUI();
+        fakeTimeout(function () {
+            async.parallel([
+                function (cb) {
+                    self.exampleTypesViewModel.load(function () {
+                        cb();
+                    });
+                },
+                function (cb) {
+                    getJSON(API_URL + "/characteristic/6", function (ret) {
+                        var mapping = window.dashboard.dollarMapping || {};
+                        _.each(ret.values, function (value) {
+                            if (!mapping[value.id]) {
+                                mapping[value.id] = "$"
+                            }
+                        });
+                        var index = _.indexBy(ret.values, "id");
+                        _.each(mapping, function (value, id) {
+                            self.dollarMapping.push({
+                                id: id,
+                                value: ko.observable(value),
+                                label: index[id].name
+                            });
+                        });
+                        cb();
+                    });
+                },
+                function (cb) {
+                    getJSON(API_URL + "/characteristic/5", function (ret) {
+                        var mapping = window.dashboard.timeMapping || {};
+                        _.each(ret.values, function (value) {
+                            if (!mapping[value.id]) {
+                                mapping[value.id] = "Low"
+                            }
+                        });
+                        var index = _.indexBy(ret.values, "id");
+                        _.each(mapping, function (value, id) {
+                            self.timeMapping.push({
+                                id: id,
+                                value: ko.observable(value),
+                                label: index[id].name
+                            });
+                        });
+                        cb();
+                    });
+                }
+            ], function () {
+                self.loading(false);
+                unBlockUI();
+            });
+        });
     };
     self.showTopics = function () {
         self.tab("topics");
@@ -1480,11 +1927,331 @@ function HelpViewModel() {
             });
         });
     };
+    self.dollarMapping = ko.observableArray([]);
+    self.timeMapping = ko.observableArray([]);
+    self.configuration = {
+        logoutText: ko.observable(window.dashboard.logoutText || ""),
+        feedbackURL: ko.observable(window.dashboard.feedbackURL || ""),
+        contactUsURL: ko.observable(window.dashboard.contactUsURL || ""),
+        faqURL: ko.observable(window.dashboard.faqURL || ""),
+        homeFilterText: ko.observable(window.dashboard.homeFilterText || ""),
+        homeBannerHtml: ko.observable(window.dashboard.homeBannerHtml || "")
+    };
+    self.saveConfiguration = function () {
+        window.dashboard.logoutText = self.configuration.logoutText();
+        window.dashboard.feedbackURL = self.configuration.feedbackURL();
+        window.dashboard.contactUsURL = self.configuration.contactUsURL();
+        window.dashboard.faqURL = self.configuration.faqURL();
+        window.dashboard.homeFilterText = self.configuration.homeFilterText();
+        window.dashboard.homeBannerHtml = self.configuration.homeBannerHtml();
+        window.dashboard.dollarMapping = {};
+        window.dashboard.timeMapping = {};
+        _.each(self.dollarMapping(), function (value) {
+            window.dashboard.dollarMapping[value.id] = value.value();
+        });
+        _.each(self.timeMapping(), function (value) {
+            window.dashboard.timeMapping[value.id] = value.value();
+        });
+        blockUI();
+        var data = JSON.stringify(window.dashboard);
+        fakeTimeout(function () {
+            $.ajax({
+                type: "post",
+                url: API_URL + "/dashboard",
+                contentType: 'application/json',
+                data: data,
+                success: function () {
+                    self.exampleTypesViewModel.save(unBlockUI);
+                },
+                error: handleError,
+                dataType: "json"
+            });
+        });
 
-    if (window.location.hash == "#topics") {
+    };
+	 self.updateAvailableFields = function(){
+        var availableNames =[];
+        for(var i=0;i<self.characteristics.ids.length;i++){
+            var id = self.characteristics.ids[i];
+            var matchCharacteristics = self.characteristics.values[id];
+            var ids = _.map($("#option-field-mapping").val(),function(str){return Number(str);});
+            if(ids.indexOf(id)==-1){
+                if([chTypes.picklist, chTypes.radio, chTypes.checkbox].indexOf(matchCharacteristics.type.id) == -1){
+                    availableNames.push(matchCharacteristics.name);
+                }else{
+                    var values =[];
+                    for(var j=0;j<matchCharacteristics.values.length;j++){
+                        values.push('{ "id":'+matchCharacteristics.values[j].id+',"name":"'+matchCharacteristics.values[j].name+'"}')
+                    }
+                    availableNames.push(matchCharacteristics.name+"("+values.join(",")+")");
+                }
+                matchCharacteristics.selected =true;
+            }
+        }
+        if(availableNames.length>0){
+            $(".available-row div.file-field").html(availableNames.join(","));
+        }else{
+            $(".available-row div.file-field").html("");
+        }
+    };
+
+    self.showExportSMG = function () {
+        self.tab("export-smg");
+        window.location.hash = "#export-smg";
+        if (self.characteristicsLoaded()) {
+            return;
+        }
+        blockUI();
+        //add more file
+        $(".browse-list").on("click", ".js-action-add-file", function(){
+            var browseList = $(this).closest(".browse-list");
+            var html = [];
+            html.push('<div class="field-container clearfix">');
+            html.push('<div class="file-field left">');
+            html.push('<input type="text"><input type="file" name="smg">');
+            html.push('</div>');
+            html.push('<a href="javascript:" class="orange-big-btn align left js-action-browse">');
+            html.push('<span class="orange-big-left left"></span>');
+            html.push('<span class="orange-big-middle left orange-shadow">Browse</span>');
+            html.push('<span class="orange-big-right left"></span>');
+            html.push('</a>');
+            html.push('<a href="javascript:" class="orange-big-btn align left btn-delete-file js-action-delete-file hidden">');
+            html.push('<span class="orange-big-left left"></span>');
+            html.push('<span class="orange-big-middle left orange-shadow"><span class="delete-icon left"></span>Delete</span>');
+            html.push('<span class="orange-big-right left"></span>');
+            html.push('</a>');
+            html.push('<a href="javascript:" class="orange-big-btn align left btn-add-more-file js-action-add-file">');
+            html.push('<span class="orange-big-left left"></span>');
+            html.push('<span class="orange-big-middle left orange-shadow">Add more Files</span>');
+            html.push('<span class="orange-big-right left"></span>');
+            html.push('</a>');
+            html.push('</div>	');
+            var $elem = $(html.join(""));
+            browseList.append($elem);
+            browseList.find(".field-container .btn-delete-file").removeClass("hidden");
+            browseList.find(".field-container .btn-add-more-file").addClass("hidden");
+            browseList.find(".field-container:last  .btn-delete-file").addClass("hidden");
+            browseList.find(".field-container:last  .btn-add-more-file").removeClass("hidden");
+            $elem.find(":file").css("opacity", "0.001");
+        });
+        $(".browse-list").on("click", ".js-action-browse", function(){
+            $(this).closest(".field-container").find(":file").trigger("click");
+        });
+        $(".browse-list").on("change", "input:file", function(){
+            var that = $(this);
+            var value = that.val();
+            var fileName = getFileName(value);
+            that.closest(".field-container").find(".file-field :text").val(fileName);
+        });
+        //remove browse file
+        $(".browse-list").on("click", ".js-action-delete-file", function(){
+            var browseRow = $(this).closest(".field-container");
+            browseRow.remove();
+        });
+        self.loading(true);
+        fakeTimeout(function () {
+            getJSON(API_URL + "/characteristics", function (ret) {
+                var characteristicsObj ={};
+                var ids=[];
+                $("#option-field-mapping option").remove();
+                for(var i=0;i<ret.length;i++){
+                    ids.push(ret[i].id);
+                    characteristicsObj[ret[i].id] = ret[i];
+                    $("#option-field-mapping").append($('<option value="'+ret[i].id+'">'+ret[i].name+'</option>'));
+                }
+                self.characteristics ={
+                    ids:ids,
+                    values:characteristicsObj
+                };
+                $("#option-field-mapping").select2();
+                self.updateAvailableFields();
+                self.characteristicsLoaded(true);
+                self.loading(false);
+                unBlockUI();
+            });
+        });
+    };
+    self.getTemplate = function(){
+        window.open(TEMPLATE_URL);
+    };
+    self.getFieldIds= function(){
+        var ids=[];
+        var idArray = $("#option-field-mapping").select2('data');
+        for(var i=0;i<idArray.length;i++){
+            ids.push(idArray[i].element[0].value);
+        }
+        return ids;
+    };
+    self.exportSMG = function(){
+        var ids = self.getFieldIds();
+        if(!ids || ids.length==0){
+            showAlert('Please select at least one field!');
+            return;
+        }
+        var form = $("<form/>").prop({
+            action: API_URL + "/exportSMGs",
+            method: "POST"
+        });
+        $("body").append(form);
+        for (var i = 0; i < ids.length; i = i + 1) {
+            $("<input type='hidden'>").attr({
+                name: "ids[" + i + "]",
+                value: ids[i]
+            }).appendTo(form);
+        }
+        form.submit();
+    };
+
+    self.importDB = function(){
+        if ($('#export-smg input:file').length > 1) {
+            showAlert('Only one file input is required. Plase delete other inputs.');
+            return;
+        }
+        var name = $('#export-smg input:file').val();
+        if (!name) {
+            showAlert("Please select a file!");
+            return;
+        }
+
+        var form  = $('#importSMGForm');
+        form.attr('action', '/api/importDB');
+        var $elem = $('.process');
+        if (!$elem.length) {
+            $elem = $('<div class="process"><div class="processbg"><div class="processbar"></div><div class="processtext"></div></div></div>');
+            $('body').append($elem);
+        }
+        $elem.show();
+        $elem.find(".processbar").width("0");
+
+        form.ajaxSubmit({
+            dataType: 'json',
+            success: function (ret) {
+                $('.process').hide();
+                alert("Database imported. Please refresh the page");
+            },
+            uploadProgress: function (event, position, total, percent) {
+                $elem.find(".processbar").width(percent + "%");
+                $elem.find(".processtext").text(Math.floor(percent)+"%");
+            },
+            error: function (response) {
+                $('.process').hide();
+                handleError(response);
+            }
+        });
+    };
+    self.importSMG = function(){
+        var ids = self.getFieldIds();
+        if(!ids || ids.length==0){
+            showAlert('Please select at least one field!');
+            return;
+        }
+        var valid = true;
+        var fileNameExpression= /(.+).csv/i;
+        var names =[];
+        $('#export-smg input:file').each(function(){
+            var filename= $(this).val();
+            if(names.indexOf(filename)==-1){
+                names.push(filename);
+            }
+            if(!fileNameExpression.test(filename.substring( filename.lastIndexOf('\\')+1))){
+                valid= false;
+                return false;
+            }
+        });
+        if(!valid){
+            showAlert("Please provide valid csv file!");
+            return;
+        }
+        if(names.length!=$('#export-smg input:file').length){
+            showAlert("Please not upload same name csv file more than once!");
+            return;
+        }
+        var form  = $('#importSMGForm');
+        form.attr('action', '/api/importSMGs')
+        form.find("input:hidden").remove();
+        for (var i = 0; i < ids.length; i = i + 1) {
+            $("<input type='hidden'>").attr({
+                name: "ids[" + i + "]",
+                value: ids[i]
+            }).appendTo(form);
+        }
+        var $elem = $('.process');
+        if (!$elem.length) {
+            $elem = $('<div class="process"><div class="processbg"><div class="processbar"></div><div class="processtext"></div></div></div>');
+            $('body').append($elem);
+        }
+        $elem.show();
+        $elem.find(".processbar").width("0");
+
+        form.ajaxSubmit({
+            dataType: 'json',
+            success: function (ret) {
+                $('.process').hide();
+                alert(ret);
+            },
+            uploadProgress: function (event, position, total, percent) {
+                $elem.find(".processbar").width(percent + "%");
+                $elem.find(".processtext").text(Math.floor(percent)+"%");
+            },
+            error: function (response) {
+                $('.process').hide();
+                handleError(response);
+            }
+        });
+    };
+    if (window.location.hash == "#configuration") {
+        self.showConfiguration();
+    } else if (window.location.hash == "#export-smg") {
+        self.showExportSMG();
+    } else if (window.location.hash == "#topics") {
         self.showTopics();
     } else {
         self.showDashboard();
+    }
+
+    var createNewExampleType = function () {
+        return {
+            name: ko.observable("")
+        }
+    };
+    self.exampleTypesViewModel = {
+        items: ko.observableArray([createNewExampleType(), createNewExampleType(), createNewExampleType()]),
+        addType: function () {
+            self.exampleTypesViewModel.items.push(createNewExampleType())
+        },
+        save: function (callback) {
+            var data = [];
+            self.exampleTypesViewModel.items().forEach(function (item) {
+                if (item.name().length) {
+                    data.push({
+                        name: item.name(),
+                        id: item.id
+                    })
+                }
+            });
+            $.ajax({
+                type: "put",
+                url: API_URL + "/exampleType",
+                contentType: 'application/json',
+                data: JSON.stringify(data),
+                success: function () {
+                    callback();
+                },
+                error: handleError,
+                dataType: "json"
+            });
+        },
+        load: function (callback) {
+            getJSON(API_URL + "/exampleTypes", function (ret) {
+                self.exampleTypesViewModel.items(_.map(ret, function (item) {
+                    return {
+                        name: ko.observable(item.name),
+                        id: item.id
+                    }
+                }));
+                callback();
+            });
+        }
     }
 }
 
@@ -1559,6 +2326,9 @@ function AddEditHelpViewModel() {
         self.previewImg(API_URL + "/helpTopic/" + self.imageId() + "/download");
         $(".preview-panel").show();
     };
+    $(".field-container").on("click", ".js-action-browse", function(){
+        $(this).closest(".field-container").find(":file").focus().trigger("click");
+    });
     $('#FileUpload').change(function () {
         var value = $('#FileUpload').val();
         if (!value.length) {
@@ -1680,10 +2450,12 @@ function HomeViewModel() {
             function (cb) {
                 getJSON(API_URL + "/dashboard", function (ret) {
                     self.widgetHtml(ret.description);
+                    $('<style type="text/css"></style>').html(ret.css).appendTo($('head'));
                     cb();
                 })
             }, function (cb) {
                 getJSON(API_URL + "/smgs", function (ret) {
+                    ret = _.shuffle(ret);
                     var examples = _.chain(ret)
                         .pluck("examples")
                         .flatten()
@@ -1710,6 +2482,7 @@ function HomeViewModel() {
                     });
                     var fields = _.map(form.fields, function (field) {
                         var ret = {
+                            id: field.id,
                             name: field.characteristic.name,
                             type_id: field.characteristic.type_id,
                             characteristic_id: field.characteristic_id,
@@ -1727,13 +2500,22 @@ function HomeViewModel() {
                                 .compact()
                                 .value(),
                             value: ko.observable(),
-                            selectedValue: ko.observable()
+                            selectedValue: ko.observable(),
+                            revert: function () {
+                                ret.value('');
+                                if (ret.selectedValues) {
+                                    ret.selectedValues([]);
+                                }
+                            }
                         };
                         if ([chTypes.number, chTypes.text, chTypes.textarea].indexOf(ret.type_id) != -1) {
                             ret.value.extend({required: false})
                         }
                         if (ret.type_id == chTypes.number) {
                             ret.value.extend({number: false})
+                        }
+                        if (ret.type_id == chTypes.radio || ret.type_id == chTypes.checkbox) {
+                            ret.selectedValues = ko.observableArray();
                         }
                         return ret;
                     });
@@ -1754,8 +2536,17 @@ function HomeViewModel() {
     });
 
     self.search = function () {
-        self.errors.showAllMessages();
-        window.location = "/smg";
+//        self.errors.showAllMessages();
+//        if (self.errors().length) {
+//            return;
+//        }
+        var hash = _.map(self.fields(), function (field) {
+            if (field.selectedValues) {
+                return field.selectedValues().join(";");
+            }
+            return field.value() || "";
+        }).join("$");
+        window.location = "/smg#" + hash;
     }
 }
 
@@ -1790,9 +2581,12 @@ $(function () {
         }
         $(this).val(val);
     });
+    if (document.referrer.indexOf(window.location.host) !== -1) {
+        $('.js-history-back').attr('href', document.referrer);
+    }
 
     $('#header .logout').click(function () {
-        showAlert('Please close your browser');
+        showAlert(window.dashboard.logoutText, null, true);
     });
     if ($('.js-manage-characteristics').length) {
         ko.applyBindings(new ManageCharacteristicsViewModel());

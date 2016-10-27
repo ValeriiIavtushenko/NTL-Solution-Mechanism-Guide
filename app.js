@@ -115,7 +115,7 @@ var urlMapping = {
         menu: "home",
         template: "smgDetails.ejs"
     },
-    "/compare/:left/:right": {
+    "/compare/:smg1/:smg2/:smg3?/:smg4?": {
         name: "smgCompare",
         menu: "home",
         template: "smgCompare.ejs"
@@ -179,12 +179,21 @@ Object.keys(urlMapping).forEach(function (url) {
         Object.keys(req.params).forEach(function (p) {
             urlParams[p] = req.params[p];
         });
-        res.render(params.template, {
-            username: req.headers['x-iisnode-logon_user'] || "domain/unknown",//if running as non IIS app
-            name: params.name,
-            urlParams: urlParams,
-            menu: params.menu,
-            admin: params.admin
+        global.db.models.dashboard.one({}, function (err, ret) {
+            res.render(params.template, {
+                username: req.headers['x-iisnode-logon_user'] || "domain/unknown",//if running as non IIS app
+                name: params.name,
+                urlParams: urlParams,
+                menu: params.menu,
+                admin: params.admin,
+                dashboard: ret ? ret.data : {},
+                filesVersion: process.env.FILES_VERSION || "1.0.0"
+            });
         });
     });
+});
+
+
+app.get("/logout", function (req, res) {
+    res.send(401);
 });

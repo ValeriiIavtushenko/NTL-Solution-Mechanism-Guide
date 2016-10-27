@@ -11,7 +11,7 @@
         <div class="bar-title">
             <h1 class="left special">Examples</h1>
             <div class="right-part right">
-                <a href="javascript:" class="btn-orange-big btn-print">
+                <a href="javascript:" class="btn-orange-big btn-print" id="print">
 							<span class="btn-right">
 								<span class="btn-middle orange-shadow">
 									<span class="btn-icon icon-print">Print</span>
@@ -42,7 +42,7 @@
                         <h3 data-bind="text: name"></h3>
                         <div class="infor">
                             <p data-bind="truncate: 'Solution Mechanism Used : ' + getSMGValue(smg, chIds.name), truncateOptions: {height: 20, wrap: 'letter'}"></p>
-                            <p data-bind="truncate: 'Type : ' + getSMGValue(smg, chIds.type), truncateOptions: {height: 20, wrap: 'letter'}"></p>
+                            <p data-bind="truncate: 'Type : ' + type, truncateOptions: {height: 20, wrap: 'letter'}"></p>
                         </div>
                         <div class="summary" data-bind="truncate: description, truncateOptions: {extractText: true}"> </div>
                         <div class="ceil-command">

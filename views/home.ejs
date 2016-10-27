@@ -13,15 +13,16 @@
     <div id="identify-search-wrapper" data-bind="visible: !loading()">
         <div class="identify-left left">
             <ul class="identify-questions" data-bind="foreach: fields">
-                <li class="clear">
+                <li class="clearfix" data-bind="css: {select: type_id == chTypes.picklist}">
                     <div class="help-wrapper">
                         <a class="help-icon left" href="javascript:"></a>
+                        <a class="reset-icon left" href="javascript:" data-bind="click: revert"></a>
                         <div class="tool-tip left hide">
                             <span class="tooltip-left left"></span>
                             <div class="tooltip-middle left">
                                 <div class="tooltip-head">
                                     <div class="tooltip-head-content left">
-                                        <h2 class="left">Helps</h2>
+                                        <h2 class="left">Help</h2>
                                         <a href="javascript:" class="right tooltip-close"></a>
                                     </div>
                                     <div class="clear"></div>
@@ -31,50 +32,60 @@
                             </div>
                         </div>
                     </div>
-                    <p class="question" data-bind="text: name"></p>
-                    <div class="answer">
-                        <!-- ko if: values.length -->
+                    <!-- ko if: type_id == chTypes.text || type_id == chTypes.textarea || type_id == chTypes.number -->
+                        <div class="question text"><div class="left label" data-bind="text: name"></div>
+
+                            <div class="right text-field required-field identify-questions">
+                                <input type="text" class="text"  maxlength="200" data-bind="value: value, css: {'js-leading-zeros':type_id == chTypes.number }" />
+                            </div>
+                        </div>
+                    <!-- /ko -->
+
+                    <!-- ko if: type_id == chTypes.radio -->
+                        <p class="question" data-bind="text: name"></p>
+                        <div class="answer left" data-bind="">
                             <!-- ko foreach: values -->
-                                <label class="option">
-                                    <input class="left" type="radio" data-bind="value: valuetype_id, iCheck: $parent.selectedValue, attr: {name: 'group_' +$parent.characteristic_id}" >
-                                    <span data-bind="text: name"></span>
-                                </label>
+                            <label class="option">
+                                <input class="left" type="radio" data-bind="value: valuetype_id, iCheck: $parent.selectedValues, attr: {name: 'group' + $parent.id}" >
+                                <span data-bind="text: name"></span>
+                            </label>
                             <!-- /ko -->
-                        <!-- /ko -->
-                        <!-- ko if: type_id == chTypes.checkbox -->
+                        </div>
+                    <!-- /ko -->
+                    <!-- ko if: type_id == chTypes.checkbox -->
+                        <p class="question" data-bind="text: name"></p>
+                        <div class="answer left" data-bind="">
+                            <!-- ko foreach: values -->
                             <label class="option">
-                                <input class="left" value="True" type="radio" data-bind="iCheck: value, attr: {name: 'group_' +$parent.characteristic_id}" >
-                                <span>True</span>
+                                <input class="left" type="checkbox" data-bind="value: valuetype_id, iCheck: $parent.selectedValues" >
+                                <span data-bind="text: name"></span>
                             </label>
+                            <!-- /ko -->
+                        </div>
+                    <!-- /ko -->
+                    <!-- ko if: type_id == chTypes.picklist -->
 
-                            <label class="option">
-                                <input class="left" value="False" type="radio" data-bind="iCheck: value, attr: {name: 'group_' +$parent.characteristic_id}" >
-                                <span>False</span>
-                            </label>
-                        <!-- /ko -->
-
-                        <!-- ko if: type_id == chTypes.text || type_id == chTypes.textarea -->
-                            <div class="text-field">
-                                <input type="text" maxlength="200" data-bind="value: value" />
+                        <div class="html_reset">
+                            <div class="question left"><div class="left " data-bind="text: name"></div>
                             </div>
-                        <!-- /ko -->
+                            <div class="left select-field identify-questions jqtransformNew">
+                                <select class="left"  data-bind="options: values,
+                                             jqSelect: value,
+                                             optionsText: 'name',
+                                             optionsValue: 'valuetype_id',
+                                             value: value,
+                                             optionsCaption: 'Choose...'">
 
-                        <!-- ko if: type_id == chTypes.number -->
-                            <div class="text-field">
-                                <input type="text" maxlength="200" data-bind="value: value" class="js-leading-zeros" />
+                                </select>
                             </div>
-                        <!-- /ko -->
-
-                    </div>
+                        </div>
+                    <!-- /ko -->
                 </li>
             </ul>
         </div>
         <div class="identify-right right">
             <span class="left-arrow"></span>
-            <h1>Identify the Solution Mechanisms
-                <br>
-                <span>at side of You</span>
-                <br>that fit your needs.</h1>
+            <h1> <%- locals.dashboard.homeFilterText%> </h1>
             <a href="javascript:;" class="orange-big-btn align clear" data-bind="click: search">
                 <span class="orange-big-left left"></span>
                                 <span class="orange-big-middle left orange-shadow Identify">
@@ -90,12 +101,12 @@
 <!--Begin Placeholder-->
 <div id="placeholder">
     <div class="wrapper clearfix">
-        <h2>Learn about What's in the guide</h2>
+        <h2>Learn About What's in the Guide</h2>
 
         <!-- ko foreach: topics -->
 
             <div class="imgcontent left last" data-bind="css: {last: $index() == 2}">
-            <img class="border left" data-bind="attr: {src: '/api/helpTopic/' + image_id + '/download' }" alt="Placeholder" width="130" height="95">
+            <img class="border left" data-bind="attr: {src: '/api/helpTopic/' + image_id + '/download' + '?width=130&height=95' }" alt="Placeholder" width="130" height="95">
             <div class="content left">
                 <h3 data-bind="text: name"></h3>
                 <p  data-bind="truncate: description, truncateOptions: { height: 60, extractText: true }">
@@ -117,14 +128,13 @@
 
 <!--Begin Examples-->
 <div id="examples">
-    <h2>Hands on Examples</h2>
+    <h2>Hands On Examples</h2>
     <div class="carousel-content" data-bind="foreach: examples">
         <div class="imgcontent left">
             <a class="carouse-item" data-bind="attr: {href: '/example/' + smg_id + '/'+id}">
-                <img class="border" src="/img/place_holder1.jpg" alt="Placeholder">
+                <img class="border" data-bind="attr: {src: getPictureUrl(imageId) + '?width=130&height=95', alt: name}"  width="130" height="95">
                 <div class="content">
                     <p data-bind="text: name">
-                        Visual Impairment due to Intracranial Presure (VIIP)
                     </p>
                 </div>
             </a>

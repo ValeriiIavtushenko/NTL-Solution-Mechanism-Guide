@@ -28,18 +28,43 @@
         <div class="clear"></div>
         <div class="ajax-pre-loader-wrapper ajax-pre-loader-new init-load">
             <table class="table1 compare-tbl clear" data-bind="css :{'ajax-content': loading()}">
+
+                <!-- ko if: items().length == 2  -->
                 <colgroup>
-                    <col width="22%" >
                     <col >
-                    <col >
+                    <col width="200px">
+                    <col width="200px">
                 </colgroup>
-                <tbody data-bind="if: items().length == 2 ">
+                <!-- /ko -->
+
+                <!-- ko if: items().length == 3  -->
+                <colgroup>
+                    <col >
+                    <col width="133px">
+                    <col width="133px">
+                    <col width="133px">
+                </colgroup>
+                <!-- /ko -->
+
+                <!-- ko if: items().length == 4  -->
+                <colgroup>
+                    <col >
+                    <col width="100px">
+                    <col width="100px">
+                    <col width="100px" >
+                    <col width="100px" >
+                </colgroup>
+                <!-- /ko -->
+
+                <tbody data-bind="if: items().length > 0 ">
                 <tr>
                     <th class="compare-head"></th>
 
                     <!-- ko foreach: items-->
                     <th class="compare-head">
-                        <span class="left"></span>
+                        <span class="left">
+                            <img data-bind="attr: {src: picture}" width="47" height="47" />
+                        </span>
                         <a data-bind="attr:{ href: '/smg/' + id}, text: name"></a>
                     </th>
                     <!-- /ko -->
@@ -50,7 +75,7 @@
                     <td class="first first-bg" data-bind="text: $data">Details</td>
 
                     <!-- ko foreach: $root.items-->
-                    <td data-bind="text: $data.otherValues[$parent]"></td>
+                    <td data-bind="html: $data.otherValues[$parent]" class="default-css"></td>
                     <!-- /ko -->
                 </tr>
                 <!-- /ko -->

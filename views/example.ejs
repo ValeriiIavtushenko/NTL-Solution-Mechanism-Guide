@@ -10,7 +10,7 @@
         <div class="bar-title">
             <h1 class="left special" data-bind="text: example() ? example().name : ''"></h1>
             <div class="right-part right">
-                <a href="javascript:" class="btn-orange-big btn-print">
+                <a href="javascript:" class="btn-orange-big btn-print" id="print">
 							<span class="btn-right">
 								<span class="btn-middle orange-shadow">
 									<span class="btn-icon icon-print">Print</span>
@@ -23,7 +23,7 @@
         <!--End .bar-title-->
 
         <div class="command top-command">
-            <a href="/examples" class="btn-orange-big btn-back">
+            <a href="/examples" class="btn-orange-big btn-back js-history-back">
 							<span class="btn-right">
 								<span class="btn-middle orange-shadow">
 									<span class="btn-icon icon-back">Back</span>
@@ -47,7 +47,7 @@
                         <div class="box-body clearfix" data-bind="foreach: examples">
                             <div class="box-ceil">
                                 <div class="img-wrapper">
-                                    <img src="/img/img-placeholder-3.png" alt="">
+                                    <img data-bind="attr: {src: getPictureUrl(imageId), alt: name}"  width="106" height="72">
                                 </div>
                                 <p><a href="example_details.html" data-bind="attr: { href: '/example/' + smg_id + '/' + id}, text: name"> </a></p>
                             </div>
@@ -63,7 +63,7 @@
         <!--End #help-article-->
 
         <div class="command bottom-command">
-            <a href="/examples" class="btn-orange-big btn-back">
+            <a href="/examples" class="btn-orange-big btn-back js-history-back">
 							<span class="btn-right">
 								<span class="btn-middle orange-shadow">
 									<span class="btn-icon icon-back">Back</span>
